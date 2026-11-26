@@ -571,7 +571,7 @@ Hasil yang diharapkan pada Kondisi A:
 - `ping` dari `Spy` (Terduga Dummy System) ke `192.239.3.194` **gagal** (`100% packet loss`).
 
 Screenshot:
-![Pengujian Kondisi A Jadwal Cocok](assets/modul5_14_1.png)
+![Pengujian Kondisi A Jadwal Cocok](screenshot/soal_14.png)
 
 ### 4.2 Kondisi B — Jadwal Tidak Cocok dengan Jam Sekarang (Pilot & Staf Ditolak)
 
@@ -597,7 +597,7 @@ Hasil yang diharapkan pada Kondisi B:
 - Seluruh pengujian `ping` dari `Unit-01`, `Lilith`, maupun `Spy` ke `192.239.3.194` **gagal** (`100% packet loss`).
 
 Screenshot:
-![Pengujian Kondisi B Di Luar Jadwal](assets/modul5_14_2.png)
+![Pengujian Kondisi B Di Luar Jadwal](screenshot/soal_14.1.png)
 
 ### 4.3 Pengembalian Variabel Jadwal ke Ketentuan Soal Asli
 
@@ -626,6 +626,293 @@ Aturan `iptables` bersifat sementara di memori dan akan hilang apabila container
 
 ```sh
 sh /root/no14.sh
+```
+---
+
+# SOAL 15 | Banjir Ping di `Tokyo3-Core`
+
+Kelompok: K56 | Prefix IP: `192.239.x.x`
+
+> `Tokyo3-Core` (`192.239.4.106`) menjadi sasaran serangan banjir paket `ICMP Echo Request` (*ping flood*) yang berpotensi membebani sumber daya sistem. Konfigurasikan pembatasan laju (*rate limiting*) pada chain `INPUT` di `Tokyo3-Core` menggunakan modul `-m limit` agar hanya menerima maksimal **5 permintaan `ping` per detik** dan membuang (`DROP`) seluruh paket `ping` masuk yang melebihi batas tersebut. Pastikan `ping` yang dikirim keluar oleh `Tokyo3-Core` sendiri tetap berjalan bebas tanpa pembatasan, serta buktikan kenaikan *counter* pembuangan paket pada `iptables`.
+
+## 1. Tujuan
+
+Menerapkan dan memverifikasi mitigasi *ICMP flood* menggunakan modul `limit` pada `iptables` di `Tokyo3-Core`:
+
+- Membatasi paket masuk `ICMP Echo Request` (`--icmp-type echo-request`) pada `Tokyo3-Core` (`192.239.4.106`) maksimal sebanyak $5\text{ paket/detik}$ (`--limit 5/second --limit-burst 5`).
+- Membuang (`DROP`) seluruh paket `ping` masuk yang melampaui ambang batas $5\text{ paket/detik}$.
+- Memastikan lalu lintas `ping` keluar yang diinisiasi oleh `Tokyo3-Core` tidak ikut terbatasi karena paket balasannya (`ICMP Echo Reply`) diizinkan melalui pencocokan state `ESTABLISHED,RELATED`.
+- Membuktikan kenaikan jumlah paket pada kolom `pkts` aturan `DROP` saat menerima banjir *ping* rapat (`interval 0,1 detik`), keberhasilan penuh (`0% packet loss`) pada *ping* berjeda normal (`interval 3 detik`), serta kelancaran *ping* keluar dari `Tokyo3-Core`.
+
+## 2. Rancangan Alamat & Kebijakan Firewall
+
+### Pemetaan Node Terkait
+
+| Node | Peran | Subnet | IP Address | Layanan / Target Uji |
+|---|---|---|---|---|
+| **Tokyo3-Core** | Host Target Proteksi (*Rate Limit*) | `192.239.4.104/29` | `192.239.4.106` | Listener TCP `80` & `8080` |
+| **Lilith** | Host Penguji (Pengirim Ping) | `192.239.4.72/29` | `192.239.4.74` | Pengirim banjir *ping* & *ping* normal |
+
+### Urutan Aturan Chain `INPUT` pada `Tokyo3-Core`
+
+| Urutan | Kondisi Pencocokan (`Match`) | Target | Keterangan |
+|---|---|---|---|
+| **1** | `-i lo` | `ACCEPT` | Mengizinkan komunikasi internal pada interface *loopback*. |
+| **2** | `-m conntrack --ctstate ESTABLISHED,RELATED` | `ACCEPT` | Mengizinkan paket balasan (`ICMP Echo Reply` & sesi TCP aktif) dari koneksi yang dimulai `Tokyo3-Core`. |
+| **3** | `-p icmp --icmp-type echo-request -m limit --limit 5/second --limit-burst 5` | `ACCEPT` | Mengizinkan permintaan `ping` masuk hingga kapasitas maksimum $5\text{ paket/detik}$. |
+| **4** | `-p icmp --icmp-type echo-request` | `DROP` | Membuang seluruh paket `ping` masuk berlebih yang tidak tertampung oleh aturan *rate limit* di atasnya. |
+
+## 3. Konfigurasi
+
+### 3.1 Tokyo3-Core – `/root/no15.sh`
+
+Pastikan layanan *listener* port `80` dan `8080` pada `Tokyo3-Core` (dari konfigurasi sebelumnya) tetap berjalan, kemudian buat dan jalankan *script* `/root/no15.sh`:
+
+```sh
+cat << 'EOF' > /root/no15.sh
+#!/bin/sh
+set -e
+
+# Modul 5 - Soal Nomor 15
+# Node: Tokyo3-Core (192.239.4.106)
+
+# Reset chain INPUT agar bersih & counter mulai dari 0
+iptables -F INPUT
+iptables -P INPUT ACCEPT
+
+# 1. Izinkan loopback & paket balasan (termasuk echo-reply untuk ping keluar Tokyo3-Core)
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# 2. Batasi ping masuk (echo-request) maksimal 5 per detik, buang kelebihannya
+iptables -A INPUT -p icmp --icmp-type echo-request -m limit --limit 5/second --limit-burst 5 -j ACCEPT
+iptables -A INPUT -p icmp --icmp-type echo-request -j DROP
+EOF
+
+chmod +x /root/no15.sh
+sh /root/no15.sh
+```
+
+## 4. Pembuktian
+
+### 4.1 Counter Awal `iptables` di `Tokyo3-Core` (Sebelum Banjir Ping)
+
+Jalankan perintah berikut pada terminal `Tokyo3-Core` tepat setelah menjalankan `no15.sh`:
+
+```sh
+iptables -L INPUT -v -n
+```
+
+Hasil yang diharapkan:
+
+- Kolom `pkts` pada baris aturan `DROP icmp -- * * 0.0.0.0/0 0.0.0.0/0 icmptype 8` masih bernilai **`0`**.
+
+
+### 4.2 Pengujian Banjir Ping dari `Lilith` & Kenaikan Counter Pembuangan
+
+1. **Dari `Lilith` (`192.239.4.74`)** — kirimkan $50$ paket `ping` rapat dengan jeda $0,1\text{ detik}$ ($10\text{ paket/detik}$) ke `Tokyo3-Core`:
+
+   ```sh
+   ping -i 0.1 -c 50 192.239.4.106
+   ```
+
+2. **Pada `Tokyo3-Core` (`192.239.4.106`)** — periksa kembali statistik paket pada chain `INPUT`:
+
+   ```sh
+   iptables -L INPUT -v -n
+   ```
+
+Hasil yang diharapkan:
+
+- Pada terminal `Lilith`, sebagian paket tidak mendapat balasan (terjadi *packet loss* sekitar $30\%\text{–}50\%$) karena laju pengiriman ($10\text{ paket/detik}$) melampaui batas maksimal $5\text{ paket/detik}$.
+- Pada terminal `Tokyo3-Core`, kolom `pkts` pada baris `DROP icmp ... icmptype 8` meningkat sesuai jumlah paket `ping` berlebih yang dibuang oleh *firewall*.
+
+### 4.3 Pengujian Ping Normal & Ping Keluar dari `Tokyo3-Core`
+
+1. **Dari `Lilith` (`192.239.4.74`)** — uji `ping` biasa dengan jeda $3\text{ detik}$ antar paket (di bawah batas $5\text{ paket/detik}$):
+
+   ```sh
+   ping -i 3 -c 5 192.239.4.106
+   ```
+
+2. **Dari `Tokyo3-Core` (`192.239.4.106`)** — uji `ping` rapat keluar menuju `Lilith` ($15$ paket dengan jeda $0,1\text{ detik}$):
+
+   ```sh
+   ping -i 0.1 -c 15 192.239.4.74
+   ```
+
+Hasil yang diharapkan:
+
+- `ping -i 3 -c 5 192.239.4.106` dari `Lilith` berhasil sepenuhnya (**`0% packet loss`**).
+- `ping -i 0.1 -c 15 192.239.4.74` dari `Tokyo3-Core` berhasil sepenuhnya (**`0% packet loss`**), membuktikan pembatasan hanya berlaku untuk trafik masuk dan tidak mengganggu trafik keluar.
+
+Screenshot:
+![Pengujian Ping Normal dan Ping Keluar Tokyo3-Core](assets/soal_15.png)
+
+## 5. Kesimpulan
+
+Penerapan modul `-m limit` (`--limit 5/second --limit-burst 5`) pada chain `INPUT` di `Tokyo3-Core` berhasil meredam serangan banjir `ICMP Echo Request` tanpa memutus komunikasi normal. Paket `ping` masuk yang dikirim dengan laju tinggi ($0,1\text{ detik/paket}$) otomatis dipangkas oleh aturan `DROP` (terbukti dari kenaikan nilai `pkts`), sementara `ping` dengan jeda normal maupun `ping` keluar yang diinisiasi oleh `Tokyo3-Core` tetap berjalan lancar dengan `0% packet loss`.
+
+## 6. Pemulihan setelah restart
+
+Aturan `iptables` bersifat sementara di memori dan akan hilang apabila container `Tokyo3-Core` mengalami *restart*. Untuk memulihkan kebijakan *rate limiting* tersebut, jalankan kembali *script*:
+
+```sh
+sh /root/no15.sh
+```
+---
+
+# SOAL 16 | Pencuri Port di `Tokyo3-Core`
+
+Kelompok: K56 | Prefix IP: `192.239.x.x`
+
+> Terdeteksi aktivitas pemindaian port (*port scanning*) dari node `Dummy-Plug` (`192.239.4.51`) yang mencoba mengakses layanan sensitif pada `Tokyo3-Core` (`192.239.4.106`). Tambahkan aturan *firewall* pada chain `INPUT` di `Tokyo3-Core` tanpa menghapus aturan pembatasan *ping* dari Soal 15 agar setiap percobaan koneksi TCP baru dari `Dummy-Plug` ke port **22, 23, dan 3306** dicatat ke log kernel dengan prefix `"SCAN-NERV: "` lalu **ditolak seketika** menggunakan `TCP RST`. Pastikan layanan resmi pada port **80** dan **8080** untuk `Dummy-Plug` maupun seluruh akses klien lain tetap berjalan normal.
+
+## 1. Tujuan
+
+Menerapkan deteksi intrusi berbasis pencatatan log dan penolakan aktif pada `Tokyo3-Core` tanpa mengganggu kebijakan Soal 15 maupun layanan publik:
+
+* Mempertahankan aturan pembatasan laju *ping* (`5/second`) dari Soal 15 agar berjalan berdampingan di dalam chain `INPUT` `Tokyo3-Core` (`192.239.4.106`).
+
+* Mencatat setiap paket koneksi TCP baru dari `Dummy-Plug` (`192.239.4.51`) yang menuju port **22, 23, dan 3306** menggunakan target `-j LOG --log-prefix "SCAN-NERV: "`.
+
+* Menolak seketika percobaan koneksi ke ketiga port terlarang tersebut menggunakan target `-j REJECT --reject-with tcp-reset` agar klien langsung menerima respons `Connection refused`.
+
+* Menjaga agar akses `Dummy-Plug` ke layanan port **80** dan **8080** serta akses dari node lain tetap berfungsi normal.
+
+* Membuktikan kenaikan kolom `pkts` pada baris `LOG` dan `REJECT` di `Tokyo3-Core` setelah pengujian dilakukan.
+
+## 2. Rancangan Alamat & Kebijakan Firewall
+
+### Pemetaan Node & Layanan Terkait
+
+| Node | Peran | Subnet | IP Address | Layanan / Target Uji | 
+| ----- | ----- | ----- | ----- | ----- | 
+| **Tokyo3-Core** | Host Target Proteksi & Logging | `192.239.4.104/29` | `192.239.4.106` | Port `80` (`Welcome to Tokyo3-Core`) & `8080` (`syifa imutz`) | 
+| **Dummy-Plug** | Sumber yang Diawasi (Scanner) | `192.239.4.48/29` | `192.239.4.51` | Uji port terlarang (`22, 23, 3306`) & normal (`80, 8080`) | 
+
+### Urutan Aturan Chain `INPUT` pada `Tokyo3-Core`
+
+Karena aturan `ESTABLISHED,RELATED` berada di urutan awal, setiap paket TCP dari `Dummy-Plug` ke port `22, 23, 3306` yang mencapai aturan nomor 5 dan 6 merupakan paket inisiasi koneksi baru (`SYN` / `NEW`):
+
+| Urutan | Kondisi Pencocokan (`Match`) | Target | Keterangan | 
+| ----- | ----- | ----- | ----- | 
+| **1** | `-i lo` | `ACCEPT` | Mengizinkan komunikasi internal antarproses pada interface *loopback*. | 
+| **2** | `-m conntrack --ctstate ESTABLISHED,RELATED` | `ACCEPT` | Mengizinkan paket balasan dari sesi koneksi yang sudah terbentuk. | 
+| **3** | `-p icmp --icmp-type echo-request -m limit --limit 5/second --limit-burst 5` | `ACCEPT` | *(Soal 15)* Mengizinkan permintaan `ping` masuk maksimal $5\text{ paket/detik}$. | 
+| **4** | `-p icmp --icmp-type echo-request` | `DROP` | *(Soal 15)* Membuang paket `ping` masuk yang melebihi batas $5\text{ paket/detik}$. | 
+| **5** | `-s 192.239.4.51 -p tcp -m multiport --dports 22,23,3306` | `LOG --log-prefix "SCAN-NERV: "` | *(Soal 16)* Mencatat paket koneksi TCP baru dari `Dummy-Plug` ke port terlarang sebelum ditolak. | 
+| **6** | `-s 192.239.4.51 -p tcp -m multiport --dports 22,23,3306` | `REJECT --reject-with tcp-reset` | *(Soal 16)* Memutus koneksi secara instan dengan mengirim paket `TCP RST`. | 
+| **Policy** | Default Policy `INPUT` | `ACCEPT` | Membiarkan akses ke port `80`, `8080`, dan lalu lintas klien lain berjalan normal. | 
+
+## 3. Konfigurasi
+
+### 3.1 Tokyo3-Core – `/root/no16.sh`
+
+Pastikan layanan *listener* TCP port `80` dan `8080` pada `Tokyo3-Core` (dari `no8.sh`) aktif, serta jalur *routing* dari `Dummy-Plug` menuju `Tokyo3-Core` (`Dummy-Plug` $\rightarrow$ `Ritsuko` $\rightarrow$ `Asuka` $\rightarrow$ `Gendou` $\rightarrow$ `Tokyo3-Core`) telah berjalan. Kemudian buat dan jalankan *script* `/root/no16.sh`:
+
+```
+cat << 'EOF' > /root/no16.sh
+#!/bin/sh
+set -e
+
+# Modul 5 - Soal Nomor 16 (menggabungkan aturan No 15 & No 16)
+# Node: Tokyo3-Core (192.239.4.106)
+# Sumber yang diawasi: Dummy-Plug (192.239.4.51)
+
+iptables -F INPUT
+iptables -P INPUT ACCEPT
+
+# 1. Izinkan loopback & koneksi yang sudah terbentuk
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# 2. (No 15) Batasi ping masuk maksimal 5 per detik, buang kelebihannya
+iptables -A INPUT -p icmp --icmp-type echo-request -m limit --limit 5/second --limit-burst 5 -j ACCEPT
+iptables -A INPUT -p icmp --icmp-type echo-request -j DROP
+
+# 3. (No 16) Log & tolak seketika koneksi TCP dari Dummy-Plug ke port 22, 23, dan 3306
+iptables -A INPUT -s 192.239.4.51 -p tcp -m multiport --dports 22,23,3306 -j LOG --log-prefix "SCAN-NERV: "
+iptables -A INPUT -s 192.239.4.51 -p tcp -m multiport --dports 22,23,3306 -j REJECT --reject-with tcp-reset
+EOF
+
+chmod +x /root/no16.sh
+sh /root/no16.sh
+
+```
+
+## 4. Pembuktian
+
+### 4.1 Counter Awal `iptables` di `Tokyo3-Core` (Sebelum Pengujian)
+
+Jalankan perintah berikut pada terminal `Tokyo3-Core` tepat setelah menjalankan `no16.sh`:
+
+```
+iptables -L INPUT -v -n
+
+```
+
+Hasil yang diharapkan:
+
+* Baris aturan `LOG` dengan prefix `SCAN-NERV: ` dan baris `REJECT` untuk sumber `192.239.4.51` pada port `22,23,3306` terpasang secara berurutan dan memiliki nilai awal `pkts` sebesar **`0`**.
+
+Screenshot:
+
+### 4.2 Pengujian Akses Port Terlarang & Layanan Normal dari `Dummy-Plug`
+
+Jalankan pengujian berikut pada terminal `Dummy-Plug` (`192.239.4.51`):
+
+1. **Uji koneksi ke port terlarang (`22`, `23`, dan `3306`) — harus ditolak seketika:**
+
+   ```
+   nc -vz -w 2 192.239.4.106 22
+   nc -vz -w 2 192.239.4.106 23
+   nc -vz -w 2 192.239.4.106 3306
+   
+   ```
+
+   *(Apabila menggunakan `nc` versi BusyBox tanpa opsi `-v`, jalankan `nc -w 2 192.239.4.106 22; echo $?` untuk masing-masing port `22`, `23`, dan `3306` yang langsung selesai dalam waktu* $< 1$ *detik dengan exit code `1`.)*
+
+2. **Uji koneksi ke layanan resmi (`80` dan `8080`) — harus berhasil:**
+
+   ```
+   echo "halo dari Dummy-Plug" | nc -w 2 192.239.4.106 80
+   echo "halo 8080" | nc -w 2 192.239.4.106 8080
+   
+   ```
+
+Hasil yang diharapkan:
+
+* Seluruh percobaan `nc` ke port `22`, `23`, dan `3306` **langsung ditolak seketika** (`Connection refused` / exit code `1` tanpa menunggu *timeout* 2 detik).
+
+* Pengiriman pesan ke port `80` dan `8080` **berhasil** dan menerima balasan masing-masing `Welcome to Tokyo3-Core` dan `syifa imutz`.
+
+### 4.3 Kenaikan Counter `LOG` & `REJECT` di `Tokyo3-Core`
+
+Periksa kembali tabel `INPUT` pada terminal `Tokyo3-Core` setelah pengujian dari `Dummy-Plug` selesai:
+
+```
+iptables -L INPUT -v -n
+
+```
+
+Hasil yang diharapkan:
+
+* Kolom `pkts` pada baris aturan `LOG` (`LOG flags 0 level 4 prefix "SCAN-NERV: "`) dan baris `REJECT` (`reject-with tcp-reset`) meningkat menjadi minimal **`3`** paket, sesuai jumlah percobaan koneksi ke port `22`, `23`, dan `3306`.
+
+![Bukti no 17](screenshot/soal_16.png)
+
+## 5. Kesimpulan
+
+Penggabungan aturan pencatatan log (`-j LOG --log-prefix "SCAN-NERV: "`) dan penolakan aktif (`-j REJECT --reject-with tcp-reset`) pada chain `INPUT` di `Tokyo3-Core` berhasil mendeteksi sekaligus memutus seketika setiap percobaan koneksi TCP dari `Dummy-Plug` (`192.239.4.51`) ke port `22`, `23`, dan `3306`. Selain itu, aturan ini berjalan selaras dengan pembatasan laju *ping* dari Soal 15 serta tetap mempertahankan akses normal menuju port `80` dan `8080`.
+
+## 6. Pemulihan setelah restart
+
+Aturan `iptables` bersifat sementara di memori dan akan terhapus apabila container `Tokyo3-Core` mengalami *restart*. Untuk memulihkan gabungan aturan Soal 15 dan Soal 16 sekaligus, jalankan kembali *script*:
+
+```
+sh /root/no16.sh
+
 ```
 
 ---
