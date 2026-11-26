@@ -7,7 +7,8 @@
 
 ## LAPORAN RESMI MODUL 5
 
-
+# SOAL 0 | Topologi
+![Topologi](screenshot/soal_0.png)
 ---
 
 # SOAL 11 | Casper Harus Jadi Hantu
