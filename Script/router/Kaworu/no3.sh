@@ -1,0 +1,15 @@
+cat > /root/no3.sh <<'EOF'
+#!/bin/sh
+set -e
+
+# Modul 5 - Soal Nomor 3
+# Router: Kaworu
+
+# Default route ke Hikari
+ip route replace default via 192.239.4.149
+EOF
+
+chmod +x /root/no3.sh
+bash /root/no3.sh
+hostname
+ip route
