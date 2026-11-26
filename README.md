@@ -253,7 +253,7 @@ Hasil yang diamati sebelum perbaikan:
 * `ping -c 3 8.8.8.8` menghasilkan `100% packet loss` dan `apt-get update` gagal melakukan resolusi DNS.
 * Koneksi `nc` dari `Unit-00` ke `192.239.4.58` port `5000` mengalami *timeout* / gagal terhubung.
 
-![Bukti Sabotase Magi-Casper](screenshot/soal_12.png.png)
+![Bukti Sabotase Magi-Casper](screenshot/soal_12.png)
 
 ### 4.2 Kondisi Sesudah Perbaikan (`sh /root/no12.sh`)
 
@@ -297,6 +297,335 @@ Aturan `iptables` bersifat sementara di memori dan akan hilang apabila container
 
 ```sh
 sh /root/no12.sh
+```
+---
+
+# SOAL 13 | Brankas Balthasar
+
+Kelompok: K56 | Prefix IP: `192.239.x.x`
+
+> Layanan informasi sensitif pada `Magi-Balthasar` berjalan di TCP port `5000` dan `5001` serta hanya boleh diakses oleh personel resmi (`Magi-Casper` dan para Pilot EVA). Konfigurasikan aturan *firewall* pada chain `INPUT` di `Magi-Balthasar` agar hanya mengizinkan akses ke port `5000` dan `5001` dari alamat IP yang terdaftar, serta **menolak seketika** (`TCP RST`, tanpa menggantung hingga *timeout*) seluruh percobaan koneksi tidak sah lainnya—termasuk dari tetangga satu *switch* (`Magi-Melchior`). Pastikan trafik jaringan lain dan `ping` keluar ke `8.8.8.8` tetap berjalan normal.
+
+## 1. Tujuan
+
+Menerapkan kontrol akses berbasis daftar putih (*whitelist*) dengan penolakan aktif (*TCP Reset*) pada layanan TCP `Magi-Balthasar`:
+
+* Memasang aturan penyaringan pada chain `INPUT` di `Magi-Balthasar` (`192.239.4.59`) agar mencakup trafik lintas subnet maupun trafik satu segmen Layer-2 (`Switch-Terminal`).
+* Mengizinkan koneksi masuk ke port TCP `5000` dan `5001` khusus dari alamat IP yang berwenang (`Magi-Casper`, `Unit-01`, `Unit-02`, `Unit-00`, dan `Sachiel`).
+* Menolak secara instan setiap koneksi masuk tidak sah ke port `5000` dan `5001` menggunakan target `-j REJECT --reject-with tcp-reset` sehingga klien langsung menerima respons `Connection refused`.
+* Mempertahankan *default policy* `INPUT ACCEPT` serta aturan `ESTABLISHED,RELATED` agar lalu lintas lain dan balasan `ping 8.8.8.8` dari `Magi-Balthasar` tidak terganggu.
+
+## 2. Rancangan Alamat & Kebijakan Firewall
+
+### Pemetaan Node Terkait
+
+| Node | Peran | Subnet | IP Address | Status Akses TCP `5000,5001` |
+|---|---|---|---|---|
+| **Magi-Balthasar** | Server Layanan (Brankas) | `192.239.4.56/29` | `192.239.4.59` | Host Target (Listener TCP `5000` & `5001`) |
+| **Magi-Casper** | Node MAGI Otorisasi | `192.239.4.56/29` | `192.239.4.58` | **Diizinkan (`ACCEPT`)** |
+| **Unit-01** | Pilot EVA | `192.239.4.64/29` | `192.239.4.66` | **Diizinkan (`ACCEPT`)** |
+| **Unit-02** | Pilot EVA | `192.239.4.64/29` | `192.239.4.67` | **Diizinkan (`ACCEPT`)** |
+| **Unit-00** | Pilot EVA | `192.239.4.64/29` | `192.239.4.68` | **Diizinkan (`ACCEPT`)** |
+| **Sachiel** | Node Otorisasi Cabang | `192.239.3.128/26` | `192.239.3.130` | **Diizinkan (`ACCEPT`)** |
+| **Magi-Melchior** | Tetangga Satu Switch | `192.239.4.56/29` | `192.239.4.60` | **Ditolak Seketika (`REJECT tcp-reset`)** |
+| **Lilith** | Host Zona Dogma | `192.239.4.72/29` | `192.239.4.74` | **Ditolak Seketika (`REJECT tcp-reset`)** |
+
+### Urutan Aturan Chain `INPUT` pada `Magi-Balthasar`
+
+| Urutan | Kondisi Pencocokan (`Match`) | Target | Keterangan |
+|---|---|---|---|
+| **1** | `-i lo` | `ACCEPT` | Mengizinkan komunikasi internal antarproses pada interface *loopback*. |
+| **2** | `-m conntrack --ctstate ESTABLISHED,RELATED` | `ACCEPT` | Mengizinkan paket balasan dari sesi keluar yang dimulai oleh `Magi-Balthasar`. |
+| **3–7** | `-p tcp -s <IP_RESMI> -m multiport --dports 5000,5001` | `ACCEPT` | Mengizinkan koneksi TCP ke port `5000` dan `5001` dari `192.239.4.58`, `.4.66`, `.4.67`, `.4.68`, dan `.3.130`. |
+| **8** | `-p tcp -m multiport --dports 5000,5001` | `REJECT --reject-with tcp-reset` | Mengirim paket `TCP RST` seketika untuk menolak koneksi tidak sah ke port `5000` dan `5001`. |
+| **Policy** | Default Policy `INPUT` | `ACCEPT` | Membiarkan lalu lintas jaringan lain (seperti `ping` dan layanan di luar port tersebut) berjalan normal. |
+
+## 3. Konfigurasi
+
+### 3.1 Magi-Balthasar – `/root/no13.sh`
+
+Pastikan layanan *listener* TCP port `5000` dan `5001` pada `Magi-Balthasar` (dari `balthasar.sh`) sedang berjalan, kemudian buat dan jalankan *script* `/root/no13.sh`:
+
+```sh
+cat << 'EOF' > /root/no13.sh
+#!/bin/sh
+set -e
+
+# Modul 5 - Soal Nomor 13
+# Node: Magi-Balthasar (192.239.4.59)
+
+# Reset chain INPUT agar bersih & idempoten
+iptables -F INPUT
+iptables -P INPUT ACCEPT
+
+# Izinkan loopback & koneksi yang sudah terbentuk
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# Daftar IP yang diizinkan ke TCP 5000 & 5001:
+# - Magi-Casper: 192.239.4.58
+# - Pilot: Unit-01 (.4.66), Unit-02 (.4.67), Unit-00 (.4.68), Sachiel (.3.130)
+for SRC in 192.239.4.58 192.239.4.66 192.239.4.67 192.239.4.68 192.239.3.130; do
+    iptables -A INPUT -p tcp -s "$SRC" -m multiport --dports 5000,5001 -j ACCEPT
+done
+
+# Tolak seketika (TCP RST) semua koneksi lain ke port 5000 & 5001
+iptables -A INPUT -p tcp -m multiport --dports 5000,5001 -j REJECT --reject-with tcp-reset
+EOF
+
+chmod +x /root/no13.sh
+sh /root/no13.sh
+```
+
+## 4. Pembuktian
+
+### 4.1 Magi-Balthasar (Aturan Firewall & Ping Keluar)
+
+Dijalankan pada terminal `Magi-Balthasar`:
+
+```sh
+iptables -S
+iptables -L INPUT -n -v
+ping -c 3 8.8.8.8
+```
+
+Hasil yang diharapkan:
+
+* `iptables -S` menampilkan kelima aturan `ACCEPT` untuk IP sumber berwenang yang diikuti oleh aturan `-A INPUT -p tcp -m multiport --dports 5000,5001 -j REJECT --reject-with tcp-reset`.
+* `ping -c 3 8.8.8.8` dari `Magi-Balthasar` berhasil (`0% packet loss`).
+
+### 4.2 Pengujian Akses Resmi & Penolakan Seketika (`Unit-01`, `Lilith`, & `Magi-Melchior`)
+
+1. **Dari `Unit-01` (`192.239.4.66` — IP Diizinkan):**
+
+   ```sh
+   echo "Unit-01 akses 5000" | nc -w 2 192.239.4.59 5000
+   echo "Unit-01 akses 5001" | nc -w 2 192.239.4.59 5001
+   ```
+
+2. **Dari `Lilith` (`192.239.4.74` — Beda Subnet, Tidak Diizinkan):**
+
+   ```sh
+   nc -vz 192.239.4.59 5000
+   nc -vz 192.239.4.59 5001
+   ```
+
+   *(Apabila menggunakan `nc` versi BusyBox tanpa opsi `-v`, jalankan `echo "tes" | nc 192.239.4.59 5000; echo $?` yang langsung selesai dalam $< 1$ detik dengan exit code `1`.)*
+
+3. **Dari `Magi-Melchior` (`192.239.4.60` — Tetangga Satu Switch, Tidak Diizinkan):**
+
+   ```sh
+   nc -vz 192.239.4.59 5000
+   nc -vz 192.239.4.59 5001
+   ```
+
+Hasil yang diharapkan:
+
+* Pengiriman pesan dari `Unit-01` ke port `5000` dan `5001` **berhasil** serta pesan `Unit-01 akses 5000` dan `Unit-01 akses 5001` tercatat pada *listener* / log di `Magi-Balthasar`.
+* Percobaan koneksi dari `Lilith` maupun `Magi-Melchior` ke port `5000` dan `5001` **langsung ditolak seketika** (`Connection refused` / exit code `1` dalam waktu $< 1$ detik tanpa menunggu *timeout*).
+
+![bukti no 13](screenshot/soal_13.png)
+
+## 5. Kesimpulan
+
+Konfigurasi *firewall* pada chain `INPUT` di `Magi-Balthasar` berhasil membatasi akses layanan TCP port `5000` dan `5001` secara selektif hanya untuk `Magi-Casper` dan keempat Pilot EVA. Penggunaan target `REJECT --reject-with tcp-reset` memastikan seluruh percobaan akses tidak sah—baik lintas subnet (`Lilith`) maupun dari tetangga satu *switch* (`Magi-Melchior`)—langsung diputus seketika dengan respons `TCP RST` (`Connection refused`), sementara lalu lintas normal dan `ping` keluar tetap berjalan lancar.
+
+## 6. Pemulihan setelah restart
+
+Aturan `iptables` bersifat sementara di memori dan akan terhapus apabila container `Magi-Balthasar` mengalami *restart*. Untuk memulihkan aturan pembatasan akses tersebut, jalankan kembali *script*:
+
+```sh
+sh /root/no13.sh
+```
+---
+
+# SOAL 14 | Jam Kunjungan `Pen-Pen`
+
+Kelompok: K56 | Prefix IP: `192.239.x.x`
+
+> Akses menuju `Pen-Pen` (`192.239.3.194`) untuk layanan HTTP (TCP port `80`) dan pengecekan `ping` (`ICMP Echo Request`) harus dibatasi berdasarkan peran serta jam operasional. Konfigurasikan aturan *firewall* berbasis waktu (`-m time`) pada `Pen-Pen` dengan ketentuan: kelompok **Pilot** hanya diizinkan pada pukul `08.00 – 16.00 WIB` (Senin–Jumat), **Staf Geofront** pada pukul `17.00 – 23.00 WIB` (setiap hari), kelompok **Terduga Dummy System** selalu ditolak sepanjang waktu, dan kelompok lainnya bebas mengakses tanpa batasan waktu. Buktikan perilaku akses pada kondisi jadwal aktif maupun di luar jadwal.
+
+## 1. Tujuan
+
+Menerapkan pengendalian akses berbasis waktu (*time-based firewall*) menggunakan modul `time` pada `iptables` di `Pen-Pen`:
+
+- Mengarahkan trafik masuk `ICMP Echo Request` (`ping`) dan `TCP port 80` pada `Pen-Pen` (`192.239.3.194`) ke *custom chain* `PENPEN_ACL`.
+- Mengonversi seluruh jadwal operasional dari zona waktu **WIB (UTC+7)** ke zona waktu sistem standar `iptables` yaitu **UTC** ($\text{UTC} = \text{WIB} - 7\text{ jam}$).
+- Memblokir secara permanen (`DROP`) seluruh trafik `ping` dan HTTP dari kelompok **Terduga Dummy System** (`Entry-Plug`, `Dummy-Plug`, dan `Spy`).
+- Membatasi akses **Pilot** (`Unit-01`, `Unit-02`, `Unit-00`, `Sachiel`) hanya pada `01:00 – 09:00 UTC` hari Senin–Jumat, serta **Staf Geofront** (`Lilith`, `Adam`) hanya pada `10:00 – 16:00 UTC` setiap hari.
+- Membuktikan bahwa permintaan dari Pilot dan Staf berhasil saat berada di dalam rentang jadwal dan ditolak saat di luar rentang jadwal, sementara Terduga Dummy System selalu ditolak.
+
+## 2. Rancangan Alamat & Kebijakan Jadwal Firewall
+
+### Pemetaan Kelompok Node & Konversi Jadwal (WIB ke UTC)
+
+| Kelompok Peran | Daftar Node & IP Address | Jadwal Akses (WIB) | Jadwal Konversi (`iptables` UTC) | Kebijakan di Luar Jadwal |
+|---|---|---|---|---|
+| **Terduga Dummy System** | `Entry-Plug` (`192.239.4.50`)<br>`Dummy-Plug` (`192.239.4.51`)<br>`Spy` (`192.239.4.102`) | Tidak ada (Diblokir penuh) | Selalu `DROP` | `DROP` |
+| **Pilot** | `Unit-01` (`192.239.4.66`)<br>`Unit-02` (`192.239.4.67`)<br>`Unit-00` (`192.239.4.68`)<br>`Sachiel` (`192.239.3.130`) | `08.00 – 16.00 WIB`<br>(Senin – Jumat) | `01:00 – 09:00 UTC`<br>(`Mon,Tue,Wed,Thu,Fri`) | `DROP` |
+| **Staf Geofront** | `Lilith` (`192.239.4.74`)<br>`Adam` (`192.239.4.75`) | `17.00 – 23.00 WIB`<br>(Setiap hari) | `10:00 – 16:00 UTC`<br>(Setiap hari) | `DROP` |
+| **Lainnya** | Seluruh IP di luar daftar di atas | Tanpa batasan waktu | Tanpa batasan waktu | `RETURN` $\rightarrow$ `ACCEPT` |
+
+### Alur Evaluasi Chain `INPUT` & `PENPEN_ACL` pada `Pen-Pen`
+
+1. Pada chain `INPUT`, trafik *loopback* (`-i lo`) dan paket balasan koneksi (`ESTABLISHED,RELATED`) diizinkan terlebih dahulu.
+2. Paket `ICMP Echo Request` (`-p icmp --icmp-type echo-request`) dan paket `TCP port 80` (`-p tcp --dport 80`) dilompatkan (`-j PENPEN_ACL`) untuk diperiksa terhadap daftar IP dan jadwal waktu.
+3. Jika IP sumber tidak termasuk dalam daftar *Dummy System*, *Pilot*, maupun *Staf Geofront*, aturan terakhir pada `PENPEN_ACL` (`-j RETURN`) mengembalikan paket ke chain `INPUT` dengan kebijakan *default* `ACCEPT`.
+
+## 3. Konfigurasi
+
+### 3.1 Pen-Pen – `/root/no14.sh`
+
+Pastikan layanan HTTP pada TCP port `80` di `Pen-Pen` (dari konfigurasi sebelumnya) tetap aktif, lalu buat dan jalankan *script* `/root/no14.sh`:
+
+```sh
+cat << 'EOF' > /root/no14.sh
+#!/bin/sh
+set -e
+
+# Modul 5 - Soal Nomor 14
+# Node: Pen-Pen (192.239.3.194)
+
+# Jadwal dalam UTC (WIB - 7 jam)
+PILOT_START="01:00"
+PILOT_STOP="09:00"
+PILOT_DAYS="Mon,Tue,Wed,Thu,Fri"
+STAF_START="10:00"
+STAF_STOP="16:00"
+
+# Reset chain INPUT & custom chain PENPEN_ACL
+iptables -F INPUT
+iptables -P INPUT ACCEPT
+iptables -F PENPEN_ACL 2>/dev/null || iptables -N PENPEN_ACL
+
+# Izinkan loopback & koneksi yang sudah terbentuk
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# Arahkan trafik ping & TCP 80 ke chain PENPEN_ACL
+iptables -A INPUT -p icmp --icmp-type echo-request -j PENPEN_ACL
+iptables -A INPUT -p tcp --dport 80 -j PENPEN_ACL
+
+# 1. Terduga Dummy System: Entry-Plug (.4.50), Dummy-Plug (.4.51), Spy (.4.102) -> Selalu ditolak
+for IP in 192.239.4.50 192.239.4.51 192.239.4.102; do
+    iptables -A PENPEN_ACL -s "$IP" -j DROP
+done
+
+# 2. Pilot: Unit-01 (.4.66), Unit-02 (.4.67), Unit-00 (.4.68), Sachiel (.3.130)
+for IP in 192.239.4.66 192.239.4.67 192.239.4.68 192.239.3.130; do
+    iptables -A PENPEN_ACL -s "$IP" -m time --timestart "$PILOT_START" --timestop "$PILOT_STOP" --weekdays "$PILOT_DAYS" -j ACCEPT
+    iptables -A PENPEN_ACL -s "$IP" -j DROP
+done
+
+# 3. Staf Geofront: Lilith (.4.74), Adam (.4.75)
+for IP in 192.239.4.74 192.239.4.75; do
+    iptables -A PENPEN_ACL -s "$IP" -m time --timestart "$STAF_START" --timestop "$STAF_STOP" -j ACCEPT
+    iptables -A PENPEN_ACL -s "$IP" -j DROP
+done
+
+# 4. Lainnya -> RETURN ke INPUT (ACCEPT)
+iptables -A PENPEN_ACL -j RETURN
+EOF
+
+chmod +x /root/no14.sh
+sh /root/no14.sh
+```
+
+## 4. Pembuktian
+
+Pengujian dilakukan dalam dua skenario waktu dengan menyesuaikan sementara parameter variabel jadwal pada `/root/no14.sh` terhadap waktu UTC sistem (`date -u`) tanpa mengubah jam sistem host.
+
+### 4.1 Kondisi A — Jadwal Cocok dengan Jam Sekarang (Pilot & Staf Diizinkan)
+
+1. **Pada `Pen-Pen`** — periksa jam UTC saat ini (`date -u`), sesuaikan sementara rentang jam uji (misalnya `07:00 – 08:00 UTC` hari `Thu`) menggunakan `sed`, lalu jalankan ulang `/root/no14.sh`:
+
+   ```sh
+   date -u
+   sed -i 's/PILOT_START=.*/PILOT_START="07:00"/' /root/no14.sh
+   sed -i 's/PILOT_STOP=.*/PILOT_STOP="08:00"/' /root/no14.sh
+   sed -i 's/PILOT_DAYS=.*/PILOT_DAYS="Thu"/' /root/no14.sh
+   sed -i 's/STAF_START=.*/STAF_START="07:00"/' /root/no14.sh
+   sed -i 's/STAF_STOP=.*/STAF_STOP="08:00"/' /root/no14.sh
+   sh /root/no14.sh
+   head -n 12 /root/no14.sh
+   ```
+
+2. **Uji `ping` ke `Pen-Pen` (`192.239.3.194`) dari ketiga kelompok node:**
+
+   - **Dari `Unit-01` (`192.239.4.66` — Pilot):**
+     ```sh
+     ping -c 2 192.239.3.194
+     ```
+   - **Dari `Lilith` (`192.239.4.74` — Staf Geofront):**
+     ```sh
+     ping -c 2 192.239.3.194
+     ```
+   - **Dari `Spy` (`192.239.4.102` — Terduga Dummy System):**
+     ```sh
+     ping -c 2 192.239.3.194
+     ```
+
+Hasil yang diharapkan pada Kondisi A:
+
+- `ping` dari `Unit-01` (Pilot) dan `Lilith` (Staf Geofront) ke `192.239.3.194` **berhasil** (`0% packet loss`).
+- `ping` dari `Spy` (Terduga Dummy System) ke `192.239.3.194` **gagal** (`100% packet loss`).
+
+Screenshot:
+![Pengujian Kondisi A Jadwal Cocok](assets/modul5_14_1.png)
+
+### 4.2 Kondisi B — Jadwal Tidak Cocok dengan Jam Sekarang (Pilot & Staf Ditolak)
+
+1. **Pada `Pen-Pen`** — geser sementara variabel jadwal ke luar jam saat ini (misalnya `20:00 – 21:00 UTC`), lalu jalankan ulang `/root/no14.sh`:
+
+   ```sh
+   sed -i 's/PILOT_START=.*/PILOT_START="20:00"/' /root/no14.sh
+   sed -i 's/PILOT_STOP=.*/PILOT_STOP="21:00"/' /root/no14.sh
+   sed -i 's/STAF_START=.*/STAF_START="20:00"/' /root/no14.sh
+   sed -i 's/STAF_STOP=.*/STAF_STOP="21:00"/' /root/no14.sh
+   sh /root/no14.sh
+   head -n 12 /root/no14.sh
+   ```
+
+2. **Uji ulang `ping` ke `Pen-Pen` (`192.239.3.194`) dari ketiga kelompok node:**
+
+   - **Dari `Unit-01` (`192.239.4.66`):** `ping -c 2 192.239.3.194`
+   - **Dari `Lilith` (`192.239.4.74`):** `ping -c 2 192.239.3.194`
+   - **Dari `Spy` (`192.239.4.102`):** `ping -c 2 192.239.3.194`
+
+Hasil yang diharapkan pada Kondisi B:
+
+- Seluruh pengujian `ping` dari `Unit-01`, `Lilith`, maupun `Spy` ke `192.239.3.194` **gagal** (`100% packet loss`).
+
+Screenshot:
+![Pengujian Kondisi B Di Luar Jadwal](assets/modul5_14_2.png)
+
+### 4.3 Pengembalian Variabel Jadwal ke Ketentuan Soal Asli
+
+Setelah kedua kondisi pengujian selesai didokumentasikan, variabel jadwal pada `/root/no14.sh` dikembalikan ke nilai ketentuan soal (`01:00–09:00 UTC` Senin–Jumat untuk Pilot dan `10:00–16:00 UTC` setiap hari untuk Staf Geofront) dan diterapkan ulang:
+
+```sh
+sed -i 's/PILOT_START=.*/PILOT_START="01:00"/' /root/no14.sh
+sed -i 's/PILOT_STOP=.*/PILOT_STOP="09:00"/' /root/no14.sh
+sed -i 's/PILOT_DAYS=.*/PILOT_DAYS="Mon,Tue,Wed,Thu,Fri"/' /root/no14.sh
+sed -i 's/STAF_START=.*/STAF_START="10:00"/' /root/no14.sh
+sed -i 's/STAF_STOP=.*/STAF_STOP="16:00"/' /root/no14.sh
+sh /root/no14.sh
+iptables -S PENPEN_ACL
+```
+
+Screenshot:
+![Aturan Final PENPEN_ACL pada Pen-Pen](assets/modul5_14_3.png)
+
+## 5. Kesimpulan
+
+Penerapan *custom chain* `PENPEN_ACL` yang dipadukan dengan modul `-m time` pada `Pen-Pen` (`192.239.3.194`) berhasil membatasi akses layanan `ICMP Echo Request` (`ping`) dan `TCP port 80` sesuai peran serta jadwal operasional masing-masing kelompok. Konversi jadwal WIB ke UTC (`WIB - 7 jam`) memastikan evaluasi waktu oleh `iptables` berjalan akurat: kelompok *Dummy System* selalu ditolak, sedangkan *Pilot* dan *Staf Geofront* hanya dapat mengakses pada jam yang telah ditentukan.
+
+## 6. Pemulihan setelah restart
+
+Aturan `iptables` bersifat sementara di memori dan akan hilang apabila container `Pen-Pen` mengalami *restart*. Untuk memulihkan kebijakan pembatasan waktu sesuai jadwal soal, jalankan kembali *script*:
+
+```sh
+sh /root/no14.sh
 ```
 
 ---
