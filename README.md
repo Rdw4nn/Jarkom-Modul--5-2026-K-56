@@ -10,7 +10,246 @@
 # SOAL 0 | Topologi
 ![Topologi](screenshot/soal_0.png)
 ---
+# SOAL 1 | Perancangan Alamat IP (VLSM) dan Pohon Subnet
 
+Pengalamatan jaringan kelompok K-56 dilakukan menggunakan metode **VLSM (Variable Length Subnet Masking)** dengan blok jaringan `192.239.0.0/21`. Metode VLSM digunakan untuk menentukan ukuran subnet berdasarkan kebutuhan jumlah host pada setiap jaringan sehingga penggunaan alamat IP menjadi lebih efisien.
+
+Ketentuan yang digunakan dalam pembagian alamat IP adalah sebagai berikut:
+
+- **Kebutuhan usable LAN**: jumlah host klien + 1 interface router sebagai gateway.
+- **Kebutuhan usable link point-to-point**: 2 interface router.
+- **Kebutuhan minimum alamat IP**: jumlah IP usable + 2 alamat untuk Network ID dan Broadcast.
+- **Urutan alokasi**: subnet dengan kebutuhan blok terbesar dialokasikan terlebih dahulu, kemudian dilanjutkan dengan blok yang lebih kecil. Pada ukuran blok yang sama, subnet LAN diprioritaskan sebelum link antar-router.
+
+#### Penentuan Prefix Blok Utama
+
+Berdasarkan kebutuhan masing-masing subnet, diperoleh total kebutuhan alamat IP sebagai berikut:
+
+| Prefix | Jumlah Subnet | Kapasitas Blok | Total IP |
+|---|---:|---:|---:|
+| /23 | 1 | 512 | 512 |
+| /24 | 1 | 256 | 256 |
+| /25 | 1 | 128 | 128 |
+| /26 | 1 | 64 | 64 |
+| /27 | 3 | 32 | 96 |
+| /28 | 1 | 16 | 16 |
+| /29 | 6 | 8 | 48 |
+| /30 | 19 | 4 | 76 |
+| **Total** | **33** | | **1196** |
+
+Jumlah bit host ditentukan berdasarkan kapasitas minimum yang dapat menampung seluruh kebutuhan alamat IP.
+
+- 2¹⁰ = 1024 IP, belum mencukupi.
+- 2¹¹ = 2048 IP, mencukupi.
+
+Dengan demikian:
+
+```math
+Prefix = 32 - 11 = 21
+```
+
+Blok jaringan minimum yang digunakan adalah `192.239.0.0/21` dengan rincian:
+
+- **Network ID:** `192.239.0.0`
+- **Prefix:** `/21`
+- **Netmask:** `255.255.248.0`
+- **Total alamat IP:** `2048`
+- **Broadcast:** `192.239.7.255`
+- **Total IP dalam blok teralokasi:** `1196`
+- **Total IP belum dialokasikan:** `852`
+
+#### Contoh Perhitungan Subnet (Switch-Quarters)
+
+Subnet `Switch-Quarters` memiliki kebutuhan sebanyak 500 host klien dan terhubung dengan router `Rei` sebagai gateway.
+
+1. Jumlah alamat IP usable yang dibutuhkan:
+
+   `500 host + 1 gateway = 501 IP`
+
+2. Jumlah alamat IP minimum setelah menambahkan Network ID dan Broadcast:
+
+   `501 + 2 = 503 IP`
+
+3. Penentuan ukuran subnet:
+
+   - Prefix `/24` memiliki kapasitas 256 alamat IP dengan 254 IP usable sehingga belum memenuhi kebutuhan.
+   - Prefix `/23` memiliki kapasitas 512 alamat IP dengan 510 IP usable sehingga dapat memenuhi kebutuhan 501 alamat IP.
+
+4. Karena Switch-Quarters memiliki kebutuhan blok IP terbesar, subnet tersebut dialokasikan pertama pada blok jaringan kelompok.
+
+Hasil perhitungan subnet Switch-Quarters adalah sebagai berikut:
+
+- **Network ID:** `192.239.0.0`
+- **Prefix / Netmask:** `/23` (`255.255.254.0`)
+- **Gateway (Rei):** `192.239.0.1`
+- **Range IP Usable:** `192.239.0.1 - 192.239.1.254`
+- **Broadcast:** `192.239.1.255`
+- **IP Terpakai:** `501`
+- **IP Sisa:** `510 - 501 = 9 IP`
+
+#### Tabel Pembagian Alamat IP (33 Subnet)
+
+| ID | Nama Subnet | Tipe | Network ID | Prefix | Netmask | Gateway / First IP | Broadcast | IP Terpakai | IP Sisa |
+|---|---|---|---|---|---|---|---|---:|---:|
+| A1 | Switch-Quarters | LAN | 192.239.0.0 | /23 | 255.255.254.0 | 192.239.0.1 | 192.239.1.255 | 501 | 9 |
+| A2 | Switch-Comm | LAN | 192.239.2.0 | /24 | 255.255.255.0 | 192.239.2.1 | 192.239.2.255 | 201 | 53 |
+| A3 | Switch-Hangar | LAN | 192.239.3.0 | /25 | 255.255.255.128 | 192.239.3.1 | 192.239.3.127 | 101 | 25 |
+| A4 | Switch-Bunker | LAN | 192.239.3.128 | /26 | 255.255.255.192 | 192.239.3.129 | 192.239.3.191 | 56 | 6 |
+| A5 | Switch-Medic | LAN | 192.239.3.192 | /27 | 255.255.255.224 | 192.239.3.193 | 192.239.3.223 | 27 | 3 |
+| A6 | Switch-Relay | LAN | 192.239.3.224 | /27 | 255.255.255.224 | 192.239.3.225 | 192.239.3.255 | 26 | 4 |
+| A7 | Switch-Garden | LAN | 192.239.4.0 | /27 | 255.255.255.224 | 192.239.4.1 | 192.239.4.31 | 15 | 15 |
+| A8 | Switch-Dock | LAN | 192.239.4.32 | /28 | 255.255.255.240 | 192.239.4.33 | 192.239.4.47 | 13 | 1 |
+| A9 | Switch-Lab | LAN | 192.239.4.48 | /29 | 255.255.255.248 | 192.239.4.49 | 192.239.4.55 | 6 | 0 |
+| A10 | Switch-Terminal | LAN | 192.239.4.56 | /29 | 255.255.255.248 | 192.239.4.57 | 192.239.4.63 | 4 | 2 |
+| A11 | Switch-Cage | LAN | 192.239.4.64 | /29 | 255.255.255.248 | 192.239.4.65 | 192.239.4.71 | 4 | 2 |
+| A12 | Switch-Dogma | LAN | 192.239.4.72 | /29 | 255.255.255.248 | 192.239.4.73 | 192.239.4.79 | 3 | 3 |
+| A13 | Switch-Monolith | LAN | 192.239.4.80 | /29 | 255.255.255.248 | 192.239.4.81 | 192.239.4.87 | 3 | 3 |
+| A14 | Switch-Radar | LAN | 192.239.4.88 | /29 | 255.255.255.248 | 192.239.4.89 | 192.239.4.95 | 5 | 1 |
+| A15 | Switch-Archive | LAN | 192.239.4.96 | /30 | 255.255.255.252 | 192.239.4.97 | 192.239.4.99 | 2 | 0 |
+| A16 | Switch-Intel | LAN | 192.239.4.100 | /30 | 255.255.255.252 | 192.239.4.101 | 192.239.4.103 | 2 | 0 |
+| A17 | Switch-Cmd | LAN | 192.239.4.104 | /30 | 255.255.255.252 | 192.239.4.105 | 192.239.4.107 | 2 | 0 |
+| A18 | Gendo - Yui | Link | 192.239.4.108 | /30 | 255.255.255.252 | 192.239.4.109 | 192.239.4.111 | 2 | 0 |
+| A19 | Gendo - Hikari | Link | 192.239.4.112 | /30 | 255.255.255.252 | 192.239.4.113 | 192.239.4.115 | 2 | 0 |
+| A20 | Gendo - Asuka | Link | 192.239.4.116 | /30 | 255.255.255.252 | 192.239.4.117 | 192.239.4.119 | 2 | 0 |
+| A21 | Gendo - Fuyutsuki | Link | 192.239.4.120 | /30 | 255.255.255.252 | 192.239.4.121 | 192.239.4.123 | 2 | 0 |
+| A22 | Gendo - Shigeru | Link | 192.239.4.124 | /30 | 255.255.255.252 | 192.239.4.125 | 192.239.4.127 | 2 | 0 |
+| A23 | Gendo - Kaji | Link | 192.239.4.128 | /30 | 255.255.255.252 | 192.239.4.129 | 192.239.4.131 | 2 | 0 |
+| A24 | Gendo - Misato | Link | 192.239.4.132 | /30 | 255.255.255.252 | 192.239.4.133 | 192.239.4.135 | 2 | 0 |
+| A25 | Yui - Mari | Link | 192.239.4.136 | /30 | 255.255.255.252 | 192.239.4.137 | 192.239.4.139 | 2 | 0 |
+| A26 | Yui - Rei | Link | 192.239.4.140 | /30 | 255.255.255.252 | 192.239.4.141 | 192.239.4.143 | 2 | 0 |
+| A27 | Yui - Shinji | Link | 192.239.4.144 | /30 | 255.255.255.252 | 192.239.4.145 | 192.239.4.147 | 2 | 0 |
+| A28 | Hikari - Kaworu | Link | 192.239.4.148 | /30 | 255.255.255.252 | 192.239.4.149 | 192.239.4.151 | 2 | 0 |
+| A29 | Asuka - Kensuke | Link | 192.239.4.152 | /30 | 255.255.255.252 | 192.239.4.153 | 192.239.4.155 | 2 | 0 |
+| A30 | Asuka - Ritsuko | Link | 192.239.4.156 | /30 | 255.255.255.252 | 192.239.4.157 | 192.239.4.159 | 2 | 0 |
+| A31 | Fuyutsuki - Maya | Link | 192.239.4.160 | /30 | 255.255.255.252 | 192.239.4.161 | 192.239.4.163 | 2 | 0 |
+| A32 | Fuyutsuki - Toji | Link | 192.239.4.164 | /30 | 255.255.255.252 | 192.239.4.165 | 192.239.4.167 | 2 | 0 |
+| A33 | Shigeru - Makoto | Link | 192.239.4.168 | /30 | 255.255.255.252 | 192.239.4.169 | 192.239.4.171 | 2 | 0 |
+
+#### Pohon Alokasi IP (VLSM)
+
+```mermaid
+%%{init: {"flowchart": {"curve": "stepAfter", "nodeSpacing": 15, "rankSpacing": 40}}}%%
+flowchart LR
+
+    ROOT["192.239.0.0/21<br/>(2048 IP)"]
+
+    ROOT --- B1["192.239.0.0/22"]
+    ROOT --- B2["192.239.4.0/22"]
+
+    B1 --- A1["A1 - Switch-Quarters<br/>192.239.0.0/23"]
+    B1 --- C1["192.239.2.0/23"]
+
+    C1 --- A2["A2 - Switch-Comm<br/>192.239.2.0/24"]
+    C1 --- C2["192.239.3.0/24"]
+
+    C2 --- A3["A3 - Switch-Hangar<br/>192.239.3.0/25"]
+    C2 --- C3["192.239.3.128/25"]
+
+    C3 --- A4["A4 - Switch-Bunker<br/>192.239.3.128/26"]
+    C3 --- C4["192.239.3.192/26"]
+
+    C4 --- A5["A5 - Switch-Medic<br/>192.239.3.192/27"]
+    C4 --- A6["A6 - Switch-Relay<br/>192.239.3.224/27"]
+
+    B2 --- D1["192.239.4.0/23"]
+    B2 --- S1["192.239.6.0/23<br/>Sisa"]
+
+    D1 --- D2["192.239.4.0/24"]
+    D1 --- S2["192.239.5.0/24<br/>Sisa"]
+
+    D2 --- E1["192.239.4.0/25"]
+    D2 --- E2["192.239.4.128/25"]
+
+    E1 --- F1["192.239.4.0/26"]
+    E1 --- F2["192.239.4.64/26"]
+
+    F1 --- A7["A7 - Switch-Garden<br/>192.239.4.0/27"]
+    F1 --- G1["192.239.4.32/27"]
+
+    G1 --- A8["A8 - Switch-Dock<br/>192.239.4.32/28"]
+    G1 --- G2["192.239.4.48/28"]
+
+    G2 --- A9["A9 - Switch-Lab<br/>192.239.4.48/29"]
+    G2 --- A10["A10 - Switch-Terminal<br/>192.239.4.56/29"]
+
+    F2 --- H1["192.239.4.64/27"]
+    F2 --- H2["192.239.4.96/27"]
+
+    H1 --- A11["A11 - Switch-Cage<br/>192.239.4.64/29"]
+    H1 --- A12["A12 - Switch-Dogma<br/>192.239.4.72/29"]
+    H1 --- A13["A13 - Switch-Monolith<br/>192.239.4.80/29"]
+    H1 --- A14["A14 - Switch-Radar<br/>192.239.4.88/29"]
+
+    H2 --- A15["A15 - Switch-Archive<br/>192.239.4.96/30"]
+    H2 --- A16["A16 - Switch-Intel<br/>192.239.4.100/30"]
+    H2 --- A17["A17 - Switch-Cmd<br/>192.239.4.104/30"]
+    H2 --- A18["A18 - Gendo-Yui<br/>192.239.4.108/30"]
+    H2 --- A19["A19 - Gendo-Hikari<br/>192.239.4.112/30"]
+    H2 --- A20["A20 - Gendo-Asuka<br/>192.239.4.116/30"]
+    H2 --- A21["A21 - Gendo-Fuyutsuki<br/>192.239.4.120/30"]
+    H2 --- A22["A22 - Gendo-Shigeru<br/>192.239.4.124/30"]
+
+    E2 --- I1["192.239.4.128/26"]
+    E2 --- S3["192.239.4.192/26<br/>Sisa"]
+
+    I1 --- J1["192.239.4.128/27"]
+    I1 --- J2["192.239.4.160/27"]
+
+    J1 --- A23["A23 - Gendo-Kaji<br/>192.239.4.128/30"]
+    J1 --- A24["A24 - Gendo-Misato<br/>192.239.4.132/30"]
+    J1 --- A25["A25 - Yui-Mari<br/>192.239.4.136/30"]
+    J1 --- A26["A26 - Yui-Rei<br/>192.239.4.140/30"]
+    J1 --- A27["A27 - Yui-Shinji<br/>192.239.4.144/30"]
+    J1 --- A28["A28 - Hikari-Kaworu<br/>192.239.4.148/30"]
+    J1 --- A29["A29 - Asuka-Kensuke<br/>192.239.4.152/30"]
+    J1 --- A30["A30 - Asuka-Ritsuko<br/>192.239.4.156/30"]
+
+    J2 --- A31["A31 - Fuyutsuki-Maya<br/>192.239.4.160/30"]
+    J2 --- A32["A32 - Fuyutsuki-Toji<br/>192.239.4.164/30"]
+    J2 --- A33["A33 - Shigeru-Makoto<br/>192.239.4.168/30"]
+    J2 --- S4["192.239.4.172/30<br/>Sisa"]
+    J2 --- S5["192.239.4.176/28<br/>Sisa"]
+
+    classDef unused stroke:#999999,stroke-width:1px,stroke-dasharray:4 3;
+    class S1,S2,S3,S4,S5 unused;
+
+    linkStyle default stroke-width:1px;
+```
+
+Pohon VLSM tersebut menunjukkan pembagian blok jaringan `192.239.0.0/21` menjadi 33 subnet yang terdiri dari 17 subnet LAN dan 16 subnet link antar-router. Percabangan disederhanakan pada kelompok subnet dengan ukuran yang sama agar diagram lebih mudah dibaca.
+
+Blok alamat IP yang belum dialokasikan adalah sebagai berikut:
+
+| Network ID | Prefix | Jumlah IP |
+|---|---|---:|
+| 192.239.4.172 | /30 | 4 |
+| 192.239.4.176 | /28 | 16 |
+| 192.239.4.192 | /26 | 64 |
+| 192.239.5.0 | /24 | 256 |
+| 192.239.6.0 | /23 | 512 |
+| **Total** | | **852** |
+
+#### Jalur Dummy-Plug ke Armisael
+
+<img width="1235" height="766" alt="image" src="https://github.com/user-attachments/assets/798f8998-7871-47a0-a701-04961056cbfb" />
+
+Dummy-Plug berada pada subnet A9 (Switch-Lab), sedangkan Armisael berada pada subnet A13 (Switch-Monolith). Berdasarkan topologi jaringan, komunikasi kedua host melewati router Ritsuko, Asuka, Gendo, dan Shigeru.
+
+Urutan subnet yang dilalui dari Dummy-Plug menuju Armisael adalah:
+
+| Urutan | Subnet | Network ID |
+|---|---|---|
+| 1 | A9 - Switch-Lab | 192.239.4.48/29 |
+| 2 | A30 - Asuka-Ritsuko | 192.239.4.156/30 |
+| 3 | A20 - Gendo-Asuka | 192.239.4.116/30 |
+| 4 | A22 - Gendo-Shigeru | 192.239.4.124/30 |
+| 5 | A13 - Switch-Monolith | 192.239.4.80/29 |
+
+Jalur yang dilalui:
+
+**Dummy-Plug → Switch-Lab (192.239.4.48/29) → Ritsuko → Link Asuka-Ritsuko (192.239.4.156/30) → Asuka → Link Gendo-Asuka (192.239.4.116/30) → Gendo → Link Gendo-Shigeru (192.239.4.124/30) → Shigeru → Switch-Monolith (192.239.4.80/29) → Armisael.**
+
+---
 # SOAL 11 | Casper Harus Jadi Hantu
 
 Kelompok: K56 | Prefix IP: `192.239.x.x`
